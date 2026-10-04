@@ -1,0 +1,1054 @@
+{
+  "id": "dbefeedc253f8a70",
+  "name": "Airtable → ChatGPT Company Briefs → Google Docs → Slack (daily 7 AM)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Airtable contacts → ChatGPT company briefs → Google Docs → Slack (daily 7:00 AM)\n\n**Setup (once):** edit the **CONFIG** node (Airtable base ID, Slack channel ID), select credentials on the 7 orange-warning HTTP nodes, invite the Slack bot to the channel.\n\n**▶ Seed Contacts (manual)** — creates the Airtable table/fields if missing and inserts random contacts.\n**⏰ Daily 7:00 AM** — reads every contact, groups by company, asks ChatGPT for a brief, creates one Google Doc per company, posts a digest with links to Slack.\n\nTimezone = workflow Settings → Timezone (default Asia/Kolkata). Activate the workflow (toggle top-right) for the 7 AM schedule to run.\n",
+        "height": 330,
+        "width": 760,
+        "color": 4
+      },
+      "id": "32b64e57-aef6-114f-c6f2-1c989e507894",
+      "name": "Note: Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -420
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "4f0bb8da-f0cf-f5e0-2c0c-1eb2f32fb36c",
+      "name": "▶ Seed Contacts (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "9cea9be9-a254-b2a1-d43e-d6803a8432a1",
+      "name": "⏰ Daily 7:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { mode: 'seed' } }];\n"
+      },
+      "id": "b7f2bdb9-1f86-29e2-974d-67e78a12bd26",
+      "name": "Mode: Seed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { mode: 'report' } }];\n"
+      },
+      "id": "cc0abc80-7730-b4ce-3ae3-3bfdc4f1477b",
+      "name": "Mode: Daily Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ╔══════════════════════════════════════════════════════════════════╗\n// ║  CONFIG — the only node you edit. Fill the 3 IDs, save, done.     ║\n// ╚══════════════════════════════════════════════════════════════════╝\nconst CONFIG = {\n  airtable: {\n    baseId: 'appXXXXXXXXXXXXXX',  // ← from your base URL: airtable.com/appXXXXXXXXXXXXXX/...\n    tableName: 'Contacts',        // created automatically by the seed run if it doesn't exist\n    fields: { name: 'Name', email: 'Email', company: 'Company Name' },\n  },\n  seed: {\n    count: 10,                    // contacts added per \"▶ Seed Contacts\" run (1–100)\n  },\n  openai: {\n    model: 'gpt-5.4-mini',        // any Chat Completions model your key can use\n    reasoningEffort: 'low',       // for reasoning models; set '' for non-reasoning models (e.g. gpt-4o-mini)\n    maxCompletionTokens: 4000,\n  },\n  report: {\n    maxCompanies: 25,             // safety cap per daily run\n    docTitlePrefix: 'Company Summary',\n    driveFolderId: '',            // optional: Drive folder ID for the docs ('' = My Drive root)\n    sharing: 'none',              // 'none' | 'anyone_with_link' | 'domain:yourcompany.com'\n  },\n  slack: {\n    channelId: 'C0XXXXXXXXX',     // ← Slack: channel name → View channel details → Channel ID\n  },\n};\n\n// ── validation: fail fast with a clear message instead of a cryptic API error ──\nconst problems = [];\nconst a = CONFIG.airtable, r = CONFIG.report;\nconst isPlaceholder = v => /XXXXXX/.test(String(v));\nif (isPlaceholder(a.baseId)) problems.push('airtable.baseId is still the placeholder — paste your base ID (starts with app).');\nif (isPlaceholder(CONFIG.slack.channelId)) problems.push('slack.channelId is still the placeholder — paste your channel ID (starts with C).');\nif (!isPlaceholder(a.baseId) && !/^app[A-Za-z0-9]{14}$/.test(String(a.baseId).trim())) problems.push('airtable.baseId must look like appXXXXXXXXXXXXXX (17 characters) — copy it from your Airtable base URL.');\nif (!String(a.tableName || '').trim()) problems.push('airtable.tableName is empty.');\nfor (const k of ['name', 'email', 'company']) if (!String((a.fields || {})[k] || '').trim()) problems.push('airtable.fields.' + k + ' is empty.');\nif (!Number.isInteger(CONFIG.seed.count) || CONFIG.seed.count < 1 || CONFIG.seed.count > 100) problems.push('seed.count must be a whole number from 1 to 100.');\nif (!String(CONFIG.openai.model || '').trim()) problems.push('openai.model is empty.');\nif (!['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(String(CONFIG.openai.reasoningEffort))) problems.push(\"openai.reasoningEffort must be '', 'low', 'medium' or 'high'.\");\nif (!Number.isInteger(CONFIG.openai.maxCompletionTokens) || CONFIG.openai.maxCompletionTokens < 500) problems.push('openai.maxCompletionTokens must be a whole number ≥ 500.');\nif (!Number.isInteger(r.maxCompanies) || r.maxCompanies < 1 || r.maxCompanies > 100) problems.push('report.maxCompanies must be 1–100.');\nif (r.driveFolderId && !/^[A-Za-z0-9_-]{10,}$/.test(r.driveFolderId)) problems.push('report.driveFolderId looks wrong — use the ID after /folders/ in the Drive URL, or leave it empty.');\nif (!(r.sharing === 'none' || r.sharing === 'anyone_with_link' || /^domain:[a-z0-9.-]+\\.[a-z]{2,}$/i.test(r.sharing))) problems.push(\"report.sharing must be 'none', 'anyone_with_link' or 'domain:yourcompany.com'.\");\nif (!isPlaceholder(CONFIG.slack.channelId) && !/^[CG][A-Z0-9]{8,}$/.test(String(CONFIG.slack.channelId).trim())) problems.push('slack.channelId must be a channel ID like C0123ABCD45 (not the #name).');\nif (problems.length) throw new Error('CONFIG needs attention → ' + problems.join(' • '));\n\na.baseId = a.baseId.trim(); a.tableName = a.tableName.trim(); CONFIG.slack.channelId = CONFIG.slack.channelId.trim();\nreturn [{ json: { ...CONFIG, mode: $input.first().json.mode } }];\n"
+      },
+      "id": "d5fa3a19-7606-d69a-a47f-21789d261d18",
+      "name": "CONFIG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "notes": "← edit me",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Runs the seed branch only when the workflow was started by \"▶ Seed Contacts (manual)\".\nconst c = $input.first().json;\nif (c.mode !== 'seed') return [];\nreturn [{ json: { schemaUrl: 'https://api.airtable.com/v0/meta/bases/' + c.airtable.baseId + '/tables' } }];\n"
+      },
+      "id": "e8eece23-66a8-2f63-a2f6-0899cbc5735f",
+      "name": "Seed Path",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Runs the report branch only when started by the 7:00 AM schedule.\nconst c = $input.first().json;\nif (c.mode !== 'report') return [];\nreturn [{ json: { listUrl: 'https://api.airtable.com/v0/' + c.airtable.baseId + '/' + encodeURIComponent(c.airtable.tableName) } }];\n"
+      },
+      "id": "5f0ba484-10bc-4933-8040-7cf2f0c714f9",
+      "name": "Report Path",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.schemaUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "cee0720a-8d3a-a1b4-bd1d-3a723be229b2",
+      "name": "Airtable: Read Schema",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst cfg = $('CONFIG').first().json;\nconst res = readHttp($input.first());\nif (!res.ok) {\n  const hint = res.status === 401 ? ' → The Airtable token is invalid. Update the Airtable credential.'\n    : (res.status === 403 || res.status === 404) ? ' → The token cannot see this base\\'s schema. In airtable.com/create/tokens edit the token: scopes data.records:read, data.records:write, schema.bases:read, schema.bases:write — and add this base under \"Access\". Also double-check CONFIG.airtable.baseId.'\n    : '';\n  throw new Error('Could not read the Airtable base schema. ' + res.message + hint);\n}\nconst tables = res.body && Array.isArray(res.body.tables) ? res.body.tables : null;\nif (!tables) throw new Error('Unexpected Airtable schema response: ' + JSON.stringify(res.body).slice(0, 300));\n\nconst F = cfg.airtable.fields;\nconst wanted = [\n  { name: F.name, type: 'singleLineText' },\n  { name: F.email, type: 'email' },\n  { name: F.company, type: 'singleLineText' },\n];\nconst base = 'https://api.airtable.com/v0/meta/bases/' + cfg.airtable.baseId + '/tables';\nconst table = tables.find(t => String(t.name).trim().toLowerCase() === cfg.airtable.tableName.toLowerCase());\n\nconst configured = { name: F.name, email: F.email, company: F.company };\nif (!table) {\n  return [{ json: { action: 'create_table', tableName: cfg.airtable.tableName, needsChanges: true, fieldMap: configured,\n    ops: [{ url: base, body: { name: cfg.airtable.tableName, description: 'Contacts used by the n8n daily company report', fields: wanted } }] } }];\n}\n// Map each logical field to the EXACT existing column name (Airtable field names are case-sensitive in the API).\nconst byLower = new Map((table.fields || []).map(f => [String(f.name).trim().toLowerCase(), f.name]));\nconst fieldMap = {};\nfor (const k of Object.keys(configured)) fieldMap[k] = byLower.get(configured[k].toLowerCase()) || configured[k];\nconst missing = wanted.filter(w => !byLower.has(w.name.toLowerCase()));\nif (!missing.length) return [{ json: { action: 'none', needsChanges: false, tableId: table.id, tableName: table.name, fieldMap } }];\nreturn [{ json: { action: 'add_fields', needsChanges: true, tableId: table.id, tableName: table.name, fieldMap,\n  ops: missing.map(m => ({ url: base + '/' + table.id + '/fields', body: m })) } }];\n"
+      },
+      "id": "c35dcfa8-d907-39c8-61a2-747d9a2dccf8",
+      "name": "Plan Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "757bc631-1918-bad2-b254-972d381592c9",
+              "leftValue": "={{ $json.needsChanges }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "e7536192-7022-8bc8-c1d1-124687e56924",
+      "name": "Schema Changes Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const plan = $input.first().json;\nreturn plan.ops.map(op => ({ json: op }));\n"
+      },
+      "id": "82a65e67-132a-4aef-51d9-99a73e909b00",
+      "name": "Split Schema Ops",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          }
+        }
+      },
+      "id": "71d4d0ab-c774-0fee-e119-baa3eb275bbb",
+      "name": "Airtable: Apply Schema",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        -120
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst plan = $('Plan Schema').first().json;\nconst ops = $('Split Schema Ops').all();\nconst resps = $input.all();\npairOrThrow(resps, ops, 'Verify Schema');\nconst failures = [];\nlet tableId = plan.tableId;\nresps.forEach((it, i) => {\n  const r = readHttp(it);\n  if (!r.ok) failures.push((ops[i].json.body.name || 'operation') + ': ' + r.message);\n  else if (plan.action === 'create_table') tableId = r.body.id;\n});\nif (failures.length) {\n  throw new Error('Could not prepare the Airtable table. ' + failures.join(' | ') +\n    ' → If this says INVALID_PERMISSIONS, give the token the scope schema.bases:write. If a field name already exists with another type, rename it or change CONFIG.airtable.fields.');\n}\nif (!tableId) throw new Error('Airtable did not return a table ID after creating the table.');\nreturn [{ json: { action: plan.action, tableId, tableName: plan.tableName, fieldMap: plan.fieldMap } }];\n"
+      },
+      "id": "2c11053f-c7af-5234-85a0-60874d7766da",
+      "name": "Verify Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('CONFIG').first().json;\nconst F = $input.first().json.fieldMap;   // exact column names resolved by Plan Schema\nconst tableId = $input.first().json.tableId;\nif (!tableId) throw new Error('No table ID received from the schema step.');\n\nconst FIRST = ['Aarav','Priya','Rohan','Ananya','Vikram','Meera','Arjun','Kavya','Sameer','Ishita','James','Olivia','Liam','Emma','Noah','Sophia','Lucas','Mia','Ethan','Ava','Mateo','Lucia','Hiroshi','Yuki','Chen','Mei','Omar','Layla','Tunde','Amara','Lars','Ingrid','Pierre','Camille','Diego','Valentina','Kofi','Zara','Ravi','Neha'];\nconst LAST = ['Sharma','Iyer','Reddy','Nair','Gupta','Menon','Rao','Kapoor','Shah','Patel','Smith','Johnson','Brown','Garcia','Miller','Davis','Martinez','Wilson','Anderson','Taylor','Tanaka','Sato','Wang','Li','Hassan','Haddad','Okafor','Mensah','Larsen','Dubois','Rossi','Silva','Kim','Park','Fischer','Novak','Costa','Ali','Banerjee','Joshi'];\nconst COMPANIES = [\n  ['Stripe','stripe.com'],['Notion','notion.so'],['Atlassian','atlassian.com'],['Freshworks','freshworks.com'],\n  ['Zoho','zoho.com'],['Razorpay','razorpay.com'],['Canva','canva.com'],['Shopify','shopify.com'],\n  ['HubSpot','hubspot.com'],['Twilio','twilio.com'],['Figma','figma.com'],['Slack','slack.com'],\n  ['Airtable','airtable.com'],['Zomato','zomato.com'],['Swiggy','swiggy.com'],['Postman','postman.com'],\n  ['Datadog','datadoghq.com'],['Snowflake','snowflake.com'],['Cloudflare','cloudflare.com'],['Asana','asana.com'],\n  ['Zerodha','zerodha.com'],['CRED','cred.club'],['Infosys','infosys.com'],['Wipro','wipro.com'],\n  ['Intercom','intercom.com'],['Miro','miro.com'],['Monday.com','monday.com'],['Klarna','klarna.com'],\n  ['Spotify','spotify.com'],['Dropbox','dropbox.com'],['GitLab','gitlab.com'],['MongoDB','mongodb.com'],\n  ['Vercel','vercel.com'],['Supabase','supabase.com'],['Revolut','revolut.com'],['Nykaa','nykaa.com'],\n];\nconst rnd = n => Math.floor(Math.random() * n);\nconst shuffle = arr => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };\nconst slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z]/g, '');\n\nconst n = cfg.seed.count;\n// ~70% as many companies as contacts, so some companies get 2+ contacts (realistic grouping).\nconst pool = shuffle(COMPANIES).slice(0, Math.max(1, Math.min(COMPANIES.length, Math.ceil(n * 0.7))));\nconst usedEmails = new Set();\nconst contacts = [];\nfor (let i = 0; i < n; i++) {\n  const first = FIRST[rnd(FIRST.length)], last = LAST[rnd(LAST.length)];\n  const [company, domain] = i < pool.length ? pool[i] : pool[rnd(pool.length)];\n  let email = slug(first) + '.' + slug(last) + '@' + domain, k = 2;\n  while (usedEmails.has(email)) email = slug(first) + '.' + slug(last) + (k++) + '@' + domain;\n  usedEmails.add(email);\n  contacts.push({ fields: { [F.name]: first + ' ' + last, [F.email]: email, [F.company]: company } });\n}\n// Airtable accepts max 10 records per create request.\nconst url = 'https://api.airtable.com/v0/' + cfg.airtable.baseId + '/' + tableId;\nconst out = [];\nfor (let i = 0; i < contacts.length; i += 10) out.push({ json: { url, body: { records: contacts.slice(i, i + 10), typecast: true } } });\nreturn out;\n"
+      },
+      "id": "c37b9d52-cc7b-c308-e32d-058fdb2ce72c",
+      "name": "Generate Random Contacts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          }
+        }
+      },
+      "id": "a30ff8a6-6660-f908-2017-1aad718e9d32",
+      "name": "Airtable: Create Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst reqs = $('Generate Random Contacts').all();\nconst resps = $input.all();\npairOrThrow(resps, reqs, 'Seed Result');\nlet created = 0; const failures = []; const sample = [];\nconst F = $('Plan Schema').first().json.fieldMap;\nresps.forEach((it, i) => {\n  const r = readHttp(it);\n  if (!r.ok) { failures.push('batch ' + (i + 1) + ': ' + r.message); return; }\n  const recs = (r.body && r.body.records) || [];\n  created += recs.length;\n  for (const rec of recs) if (sample.length < 5) sample.push(rec.fields[F.name] + ' — ' + rec.fields[F.company]);\n});\nif (failures.length) {\n  throw new Error('Created ' + created + ' contacts, but ' + failures.length + ' batch(es) failed: ' + failures.join(' | ') +\n    ' → 403/INVALID_PERMISSIONS: token needs data.records:write. 422: a field type does not accept the value.');\n}\nreturn [{ json: { status: '✅ Seed complete', created, table: $('CONFIG').first().json.airtable.tableName, sample } }];\n"
+      },
+      "id": "7d967160-459c-f2f7-6645-ff837ef4a100",
+      "name": "Seed Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.listUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({ pageSize: 100 }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "offset",
+                    "value": "={{ $response.body.offset }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body || !$response.body.offset }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "id": "50606fca-8bbe-699c-a523-fe974443cd20",
+      "name": "Airtable: List Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst cfg = $('CONFIG').first().json;\nconst F = cfg.airtable.fields;\nconst pages = $input.all().map(readHttp);\nconst records = [];\nfor (const p of pages) {\n  if (!p.ok) {\n    const hint = p.status === 401 ? ' → Invalid Airtable token: update the Airtable credential.'\n      : (p.status === 403 || p.status === 404) ? ' → Table \"' + cfg.airtable.tableName + '\" not found or not accessible in base ' + cfg.airtable.baseId + '. Run \"▶ Seed Contacts (manual)\" once (it creates the table), fix CONFIG.airtable.tableName, or add this base to the token\\'s Access list.'\n      : p.status === 422 ? ' → Airtable rejected the request (usually a wrong table name).' : '';\n    throw new Error('Could not read contacts from Airtable. ' + p.message + hint);\n  }\n  if (!p.body || !Array.isArray(p.body.records)) throw new Error('Unexpected Airtable response (no \"records\" array): ' + JSON.stringify(p.body).slice(0, 300));\n  records.push(...p.body.records);\n}\nif (!records.length) throw new Error('The Airtable table \"' + cfg.airtable.tableName + '\" has no contacts yet. Run \"▶ Seed Contacts (manual)\" first.');\n\n// case-insensitive field lookup, so \"Company name\" still matches \"Company Name\"\nfunction field(fields, name) {\n  if (fields[name] !== undefined) return fields[name];\n  const k = Object.keys(fields).find(x => x.trim().toLowerCase() === name.toLowerCase());\n  return k === undefined ? undefined : fields[k];\n}\nconst clean = v => v === undefined || v === null ? '' : String(Array.isArray(v) ? v.join(', ') : v).replace(/\\s+/g, ' ').trim();\n\nconst groups = new Map();\nlet withoutCompany = 0;\nfor (const rec of records) {\n  const f = rec.fields || {};\n  const company = clean(field(f, F.company));\n  if (!company) { withoutCompany++; continue; }\n  const key = company.toLowerCase();\n  if (!groups.has(key)) groups.set(key, { company, contacts: [] });\n  groups.get(key).contacts.push({ name: clean(field(f, F.name)) || '(no name)', email: clean(field(f, F.email)).toLowerCase() });\n}\nif (!groups.size) throw new Error('Found ' + records.length + ' contacts but none has a value in \"' + F.company + '\". Make CONFIG.airtable.fields.company match your column name.');\n\nlet list = [...groups.values()].sort((x, y) => x.company.localeCompare(y.company));\nconst skipped = list.slice(cfg.report.maxCompanies).map(g => g.company);\nlist = list.slice(0, cfg.report.maxCompanies);\n\nconst SYSTEM = [\n  'You are a meticulous B2B research analyst writing short company briefs for a sales team.',\n  'Rules:',\n  '- Only state what you are confident is true from your training knowledge. Never invent numbers (revenue, headcount, funding, dates); describe qualitatively unless a figure is widely reported.',\n  '- If the name is ambiguous, use the email domain(s) to pick the right company and state which one in identified_as.',\n  '- If you do not recognise the company, set confidence to \"low\", say so plainly in overview, and leave the other fields as empty strings / empty array instead of guessing.',\n  '- Plain text inside the fields: no markdown, no bullet characters, no URLs.',\n  'Return ONE JSON object with exactly these keys:',\n  '{\"identified_as\": string, \"overview\": string (2-3 sentences), \"products_services\": string (1-3 sentences), \"customers_market\": string (1-2 sentences), \"business_model\": string (1-2 sentences), \"notable_facts\": string[] (0-4 short items), \"sales_angle\": string (1 sentence: why a B2B seller might reach out to them), \"confidence\": \"high\" | \"medium\" | \"low\"}',\n].join('\\n');\n\nconst runMeta = { totalContacts: records.length, withoutCompany, skippedCompanies: skipped, companies: list.length };\nreturn list.map((g, i) => {\n  const domains = [...new Set(g.contacts.map(c => (c.email.split('@')[1] || '').trim()).filter(Boolean))];\n  const body = {\n    model: cfg.openai.model,\n    messages: [\n      { role: 'system', content: SYSTEM },\n      { role: 'user', content: 'Company name: ' + g.company + '\\nEmail domain(s) of our contacts there: ' + (domains.join(', ') || 'unknown') + '\\n\\nWrite the brief as the JSON object described.' },\n    ],\n    response_format: { type: 'json_object' },\n    max_completion_tokens: cfg.openai.maxCompletionTokens,\n  };\n  if (cfg.openai.reasoningEffort) body.reasoning_effort = cfg.openai.reasoningEffort;\n  return { json: { company: g.company, contacts: g.contacts, runMeta: i === 0 ? runMeta : null, request: body } };\n});\n"
+      },
+      "id": "5854c75c-a5af-3415-c413-545c2213ae8e",
+      "name": "Group Contacts by Company",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "id": "b6c31ac6-5b7e-d265-d033-c217e9ad276c",
+      "name": "OpenAI: Summarize Company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst jobs = $('Group Contacts by Company').all();\nconst resps = $input.all();\npairOrThrow(resps, jobs, 'Validate Summaries');\n\nfunction hint(status, msg) {\n  if (status === 401) return ' → Invalid OpenAI API key: update the OpenAI credential.';\n  if (status === 404 || /model_not_found|does not exist/i.test(msg)) return ' → Model not available to your key: change CONFIG.openai.model.';\n  if (/insufficient_quota/i.test(msg)) return ' → OpenAI account has no credit: add billing at platform.openai.com.';\n  if (status === 429) return ' → OpenAI rate limit: lower CONFIG.report.maxCompanies or retry later.';\n  if (status === 400 && /reasoning/i.test(msg)) return \" → This model doesn't accept reasoning_effort: set CONFIG.openai.reasoningEffort to ''.\";\n  if (status >= 500) return ' → OpenAI server error; tomorrow\\'s run will retry.';\n  return '';\n}\nfunction extractJson(text) {\n  let t = String(text || '').trim();\n  t = t.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, '');\n  const a = t.indexOf('{'), b = t.lastIndexOf('}');\n  if (a === -1 || b <= a) throw new Error('no JSON object found');\n  return JSON.parse(t.slice(a, b + 1));\n}\nconst s = v => (typeof v === 'string' ? v : '').replace(/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]/g, '').trim();\n\nreturn jobs.map((job, i) => {\n  const { company, contacts } = job.json;\n  const out = { company, contacts, ok: false, error: '', summary: null };\n  const r = readHttp(resps[i]);\n  if (!r.ok) return { json: { ...out, error: 'OpenAI ' + r.message + hint(r.status, r.message) } };\n  const choice = r.body && Array.isArray(r.body.choices) ? r.body.choices[0] : null;\n  if (!choice) return { json: { ...out, error: 'OpenAI returned no choices: ' + JSON.stringify(r.body).slice(0, 200) } };\n  const msg = choice.message || {};\n  if (msg.refusal) return { json: { ...out, error: 'Model refused: ' + String(msg.refusal).slice(0, 200) } };\n  if (choice.finish_reason === 'length') return { json: { ...out, error: 'Answer was cut off (finish_reason=length) → raise CONFIG.openai.maxCompletionTokens.' } };\n  if (choice.finish_reason === 'content_filter') return { json: { ...out, error: 'Blocked by OpenAI content filter.' } };\n  let d;\n  try { d = extractJson(msg.content); }\n  catch (e) { return { json: { ...out, error: 'Could not parse the model JSON (' + e.message + '). Raw start: ' + String(msg.content || '').slice(0, 200) } }; }\n  const conf = String(d.confidence || '').toLowerCase();\n  const summary = {\n    identifiedAs: s(d.identified_as) || company,\n    overview: s(d.overview),\n    products: s(d.products_services),\n    market: s(d.customers_market),\n    businessModel: s(d.business_model),\n    facts: (Array.isArray(d.notable_facts) ? d.notable_facts : []).map(x => s(String(x))).filter(Boolean).slice(0, 6),\n    salesAngle: s(d.sales_angle),\n    confidence: ['high', 'medium', 'low'].includes(conf) ? conf : 'unknown',\n  };\n  if (summary.overview.length < 30) return { json: { ...out, error: 'Model returned an empty/too-short overview.' } };\n  return { json: { ...out, ok: true, summary, model: r.body.model || '' } };\n});\n"
+      },
+      "id": "7c18b479-1de3-d6dc-524c-e878eea2fa28",
+      "name": "Validate Summaries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('CONFIG').first().json;\nconst all = $input.all().map(i => i.json);\nconst ok = all.filter(x => x.ok);\nif (!ok.length) {\n  throw new Error('All ' + all.length + ' company summaries failed, so no report was produced. First error: ' + (all[0] ? all[0].company + ' — ' + all[0].error : 'n/a'));\n}\nconst day = $now.toFormat('yyyy-LL-dd');\nconst url = 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id,name,webViewLink';\nreturn ok.map(x => {\n  const body = { name: cfg.report.docTitlePrefix + ' — ' + x.company + ' — ' + day, mimeType: 'application/vnd.google-apps.document' };\n  if (cfg.report.driveFolderId) body.parents = [cfg.report.driveFolderId];\n  return { json: { company: x.company, url, body } };\n});\n"
+      },
+      "id": "5a2b2eb0-a4e1-40b9-f0ac-353c5a29c1e2",
+      "name": "Prepare Google Docs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          }
+        }
+      },
+      "id": "16b151fb-c2d5-d421-2636-97e54bcc8c3d",
+      "name": "Drive: Create Doc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst preps = $('Prepare Google Docs').all().map(i => i.json);\nconst resps = $input.all();\npairOrThrow(resps, preps, 'Build Doc Content');\nconst summaries = new Map($('Validate Summaries').all().map(i => [i.json.company, i.json]));\nconst when = $now.toFormat(\"d LLL yyyy, HH:mm ZZZZ\");\n\nfunction buildRequests(company, s, contacts, model) {\n  let text = '';\n  const styles = [], bullets = [];\n  const pos = () => 1 + text.length;            // Docs index (UTF-16, body starts at 1)\n  const para = (t, style) => { const start = pos(); text += t + '\\n'; if (style) styles.push([start, pos(), style]); return [start, pos()]; };\n  const section = (title, body) => { if (!body) return; para(title, 'HEADING_2'); para(body); };\n  const list = (title, items) => {\n    if (!items.length) return;\n    para(title, 'HEADING_2');\n    const start = pos(); items.forEach(t => para(t)); bullets.push([start, pos()]);\n  };\n  para(company, 'TITLE');\n  para('Company summary · generated ' + when + (model ? ' · ' + model : ''), 'SUBTITLE');\n  if (s.identifiedAs && s.identifiedAs.toLowerCase() !== company.toLowerCase()) para('Identified as: ' + s.identifiedAs);\n  section('Overview', s.overview);\n  section('Products & services', s.products);\n  section('Customers & market', s.market);\n  section('Business model', s.businessModel);\n  list('Notable facts', s.facts);\n  section('Sales angle', s.salesAngle);\n  list('Contacts in Airtable', contacts.map(c => c.name + (c.email ? ' — ' + c.email : '')));\n  para('Confidence: ' + s.confidence + '. AI-generated from the model\\'s general knowledge — verify key facts before external use.');\n  return [\n    { insertText: { location: { index: 1 }, text } },\n    ...styles.map(([a, b, st]) => ({ updateParagraphStyle: { range: { startIndex: a, endIndex: b }, paragraphStyle: { namedStyleType: st }, fields: 'namedStyleType' } })),\n    ...bullets.map(([a, b]) => ({ createParagraphBullets: { range: { startIndex: a, endIndex: b }, bulletPreset: 'BULLET_DISC_CIRCLE_SQUARE' } })),\n  ];\n}\n\nconst out = [], failures = [];\nresps.forEach((it, i) => {\n  const r = readHttp(it);\n  const company = preps[i].company;\n  if (!r.ok || !r.body || !r.body.id) { failures.push(company + ': ' + (r.message || 'no file id returned') + googleHint(r, 'Google Drive API')); return; }\n  const v = summaries.get(company);\n  out.push({ json: {\n    company, documentId: r.body.id,\n    docUrl: r.body.webViewLink || ('https://docs.google.com/document/d/' + r.body.id + '/edit'),\n    request: { requests: buildRequests(company, v.summary, v.contacts, v.model) },\n  } });\n});\nif (!out.length) throw new Error('Could not create any Google Doc. ' + [...new Set(failures.map(f => f.slice(f.indexOf(': ') + 2)))].join(' | '));\nreturn out;\n\n\nfunction googleHint(r, api) {\n  const m = String(r.message || '');\n  if (/accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(m))\n    return ' → Enable the ' + api + ' in Google Cloud Console (APIs & Services → Library) for the project that owns your OAuth client, wait 2 minutes, re-run.';\n  if (r.status === 401) return ' → The Google credential is no longer authorised. Open the credential in n8n and click \"Sign in with Google\" again.';\n  if (r.status === 403 && /insufficient|scope/i.test(m)) return ' → The Google credential lacks a scope. Reconnect it (\"Sign in with Google\") and tick every permission box.';\n  if (r.status === 403) return ' → Permission denied. Make sure the signed-in Google account can edit this file/folder.';\n  if (r.status === 404) return ' → Not found. Check the ID in CONFIG and that the signed-in Google account has access to it.';\n  if (r.status === 429) return ' → Google rate limit. Re-run in a minute.';\n  return '';\n}\n"
+      },
+      "id": "94096a57-7edf-02d0-36f1-257afd9ef3ab",
+      "name": "Build Doc Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://docs.googleapis.com/v1/documents/' + $json.documentId + ':batchUpdate' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          }
+        }
+      },
+      "id": "f9335441-eaa0-6074-4e27-a03e9eed1af1",
+      "name": "Docs: Write Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst cfg = $('CONFIG').first().json;\nconst preps = $('Prepare Google Docs').all().map(i => i.json);\nconst creates = $('Drive: Create Doc').all().map(readHttp);\nconst built = $('Build Doc Content').all().map(i => i.json);\nconst writes = $input.all();\npairOrThrow(writes, built, 'Collect Docs');\nconst writeByDoc = new Map(built.map((b, i) => [b.documentId, readHttp(writes[i])]));\n\nconst docs = preps.map((p, i) => {\n  const c = creates[i];\n  if (!c.ok || !c.body || !c.body.id) return { company: p.company, ok: false, documentId: null, docUrl: null, error: 'Google Doc not created: ' + c.message + googleHint(c, 'Google Drive API') };\n  const b = built.find(x => x.documentId === c.body.id);\n  const w = writeByDoc.get(c.body.id);\n  if (!w || !w.ok) return { company: p.company, ok: false, documentId: c.body.id, docUrl: b ? b.docUrl : null, error: 'Doc created but content not written: ' + (w ? w.message + googleHint(w, 'Google Docs API') : 'no response') };\n  return { company: p.company, ok: true, documentId: c.body.id, docUrl: b.docUrl, error: '' };\n});\nreturn [{ json: { docs, sharing: cfg.report.sharing, shareNeeded: cfg.report.sharing !== 'none' && docs.some(d => d.documentId) } }];\n\n\nfunction googleHint(r, api) {\n  const m = String(r.message || '');\n  if (/accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(m))\n    return ' → Enable the ' + api + ' in Google Cloud Console (APIs & Services → Library) for the project that owns your OAuth client, wait 2 minutes, re-run.';\n  if (r.status === 401) return ' → The Google credential is no longer authorised. Open the credential in n8n and click \"Sign in with Google\" again.';\n  if (r.status === 403 && /insufficient|scope/i.test(m)) return ' → The Google credential lacks a scope. Reconnect it (\"Sign in with Google\") and tick every permission box.';\n  if (r.status === 403) return ' → Permission denied. Make sure the signed-in Google account can edit this file/folder.';\n  if (r.status === 404) return ' → Not found. Check the ID in CONFIG and that the signed-in Google account has access to it.';\n  if (r.status === 429) return ' → Google rate limit. Re-run in a minute.';\n  return '';\n}\n"
+      },
+      "id": "310557d1-3c55-f86a-9b70-f5b186d9289a",
+      "name": "Collect Docs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4776a993-b744-ee3b-7208-5a0d2a5ee914",
+              "leftValue": "={{ $json.shareNeeded }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "0ecf702f-206f-74b9-83e5-301c5cde2e33",
+      "name": "Sharing Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2860,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { docs, sharing } = $input.first().json;\nconst perm = sharing === 'anyone_with_link'\n  ? { role: 'reader', type: 'anyone' }\n  : { role: 'reader', type: 'domain', domain: sharing.slice('domain:'.length) };\nreturn docs.filter(d => d.documentId).map(d => ({ json: {\n  company: d.company,\n  url: 'https://www.googleapis.com/drive/v3/files/' + d.documentId + '/permissions?supportsAllDrives=true',\n  body: perm,\n} }));\n"
+      },
+      "id": "55fb1b80-25a3-c957-98c5-01729b6866d4",
+      "name": "Split Share Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          }
+        }
+      },
+      "id": "a7a54f3b-dd5e-ad80-fec1-c45584cab7d3",
+      "name": "Drive: Share Doc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        280
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst reqs = $('Split Share Requests').all().map(i => i.json);\nconst resps = $input.all();\npairOrThrow(resps, reqs, 'Collect Sharing');\nconst shareErrors = [];\nresps.forEach((it, i) => { const r = readHttp(it); if (!r.ok) shareErrors.push(reqs[i].company + ': sharing failed — ' + r.message + googleHint(r, 'Google Drive API')); });\nreturn [{ json: { ...$('Collect Docs').first().json, shareErrors } }];\n\n\nfunction googleHint(r, api) {\n  const m = String(r.message || '');\n  if (/accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(m))\n    return ' → Enable the ' + api + ' in Google Cloud Console (APIs & Services → Library) for the project that owns your OAuth client, wait 2 minutes, re-run.';\n  if (r.status === 401) return ' → The Google credential is no longer authorised. Open the credential in n8n and click \"Sign in with Google\" again.';\n  if (r.status === 403 && /insufficient|scope/i.test(m)) return ' → The Google credential lacks a scope. Reconnect it (\"Sign in with Google\") and tick every permission box.';\n  if (r.status === 403) return ' → Permission denied. Make sure the signed-in Google account can edit this file/folder.';\n  if (r.status === 404) return ' → Not found. Check the ID in CONFIG and that the signed-in Google account has access to it.';\n  if (r.status === 429) return ' → Google rate limit. Re-run in a minute.';\n  return '';\n}\n"
+      },
+      "id": "6017fa24-3c41-10bd-6e21-e3ded276ecc5",
+      "name": "Collect Sharing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('CONFIG').first().json;\nconst meta = $('Group Contacts by Company').first().json.runMeta;\nconst results = $('Validate Summaries').all().map(i => i.json);\nconst { docs, shareErrors = [] } = $input.first().json;\nconst docBy = new Map(docs.map(d => [d.company, d]));\n\nconst esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst cut = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);\nconst plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');\n\nconst lines = [], issues = [];\nfor (const r of results) {\n  if (!r.ok) { issues.push('• *' + esc(r.company) + '* — summary failed: ' + esc(cut(r.error, 300))); continue; }\n  const d = docBy.get(r.company);\n  const title = d && d.docUrl ? '<' + d.docUrl + '|' + esc(r.company).replace(/\\|/g, '¦') + '>' : esc(r.company);\n  lines.push('• *' + title + '* · ' + plural(r.contacts.length, 'contact') + ' · confidence: ' + r.summary.confidence +\n    '\\n      ' + esc(cut(r.summary.overview, 240)));\n  if (d && !d.ok) issues.push('• *' + esc(r.company) + '* — ' + esc(cut(d.error, 300)));\n}\nfor (const e of shareErrors) issues.push('• ' + esc(cut(e, 300)));\nif (meta.skippedCompanies.length) issues.push('• ' + plural(meta.skippedCompanies.length, 'company') + ' skipped by the maxCompanies cap (' + meta.companies + '): ' + esc(cut(meta.skippedCompanies.join(', '), 300)));\nif (meta.withoutCompany) issues.push('• ' + plural(meta.withoutCompany, 'contact') + ' without a company name ' + (meta.withoutCompany === 1 ? 'was' : 'were') + ' skipped.');\n\n// Slack limits: 3000 chars per section, 50 blocks per message.\nconst chunk = arr => { const out = []; let cur = ''; for (const l of arr) { if (cur && (cur + '\\n' + l).length > 2900) { out.push(cur); cur = l; } else cur = cur ? cur + '\\n' + l : l; } if (cur) out.push(cur); return out; };\nconst okCount = results.filter(r => r.ok).length;\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: '📊 Daily Company Report', emoji: true } },\n  { type: 'context', elements: [{ type: 'mrkdwn', text: $now.toFormat('cccc, d LLL yyyy · HH:mm ZZZZ') + ' · ' + okCount + '/' + results.length + ' companies · ' + plural(meta.totalContacts, 'contact') } ] },\n];\nfor (const c of chunk(lines)) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: c } });\nif (!lines.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '_No company summaries were produced today._' } });\nif (issues.length) {\n  blocks.push({ type: 'divider' });\n  for (const c of chunk(['⚠️ *' + plural(issues.length, 'issue') + '*', ...issues])) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: c } });\n}\nblocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: 'Source: Airtable › ' + esc(cfg.airtable.tableName) + ' · one Google Doc per company · generated by n8n' }] });\nif (blocks.length > 50) { blocks.splice(48, blocks.length - 49, { type: 'section', text: { type: 'mrkdwn', text: '_…truncated — see the Google Docs for the rest._' } }); }\n\nconst text = 'Daily Company Report — ' + okCount + ' of ' + results.length + ' companies summarized' + (issues.length ? ' (' + plural(issues.length, 'issue') + ')' : '');\nreturn [{ json: {\n  okCount, total: results.length, issues: issues.length,\n  request: { channel: cfg.slack.channelId, text, blocks, unfurl_links: false, unfurl_media: false },\n} }];\n"
+      },
+      "id": "ff5d4a54-188e-2bd5-a391-3ead3da48f19",
+      "name": "Build Slack Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "6120b38e-a603-bb0c-4fb9-e23548ae9eac",
+      "name": "Slack: Post Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── shared helpers: normalise HTTP Request node output ───────────────────\n// HTTP nodes run with \"Full Response\" + \"Never Error\", so every API answer\n// (2xx or not) arrives as { statusCode, body }. Transport failures (DNS,\n// timeout, reset) arrive as { error } because the node continues on error.\nfunction apiMessage(b, fallback) {\n  if (b === null || b === undefined || b === '') return fallback || 'Empty response body';\n  if (typeof b === 'string') return b.slice(0, 400);\n  if (b.error !== undefined) {\n    const e = b.error;\n    if (typeof e === 'string') return e + (b.message ? ': ' + b.message : '') + (b.needed ? ' (needed scope: ' + b.needed + ')' : '');\n    if (e && typeof e === 'object') {\n      const reason = Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason ? ' [' + e.errors[0].reason + ']' : '';\n      return [e.type || e.status || e.code, e.message].filter(Boolean).join(': ') + reason;\n    }\n  }\n  if (b.message) return String(b.message);\n  return JSON.stringify(b).slice(0, 400);\n}\nfunction readHttp(item) {\n  const j = (item && item.json) || {};\n  if (Object.prototype.hasOwnProperty.call(j, 'statusCode') && Object.prototype.hasOwnProperty.call(j, 'body')) {\n    let body = j.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { /* keep raw text */ } }\n    const status = Number(j.statusCode) || 0;\n    const ok = status >= 200 && status < 300;\n    return { ok, status, body, message: ok ? '' : 'HTTP ' + status + ' — ' + apiMessage(body, j.statusMessage) };\n  }\n  if (Object.prototype.hasOwnProperty.call(j, 'error')) {\n    const e = j.error;\n    let msg = typeof e === 'string' ? e : (e && (e.message || e.description || e.code)) || '';\n    if (!msg) { try { msg = JSON.stringify(e).slice(0, 300); } catch (x) { msg = 'unknown'; } }\n    return { ok: false, status: 0, body: null, message: 'Request failed before a response was received: ' + msg };\n  }\n  return { ok: true, status: 200, body: j, message: '' };\n}\nfunction pairOrThrow(responses, requests, label) {\n  if (responses.length !== requests.length) {\n    throw new Error(label + ': expected ' + requests.length + ' responses but got ' + responses.length +\n      '. An HTTP node changed its item count — check that pagination/batching was not modified.');\n  }\n}\n\n\nconst prev = $('Build Slack Report').first().json;\nconst r = readHttp($input.first());\nif (!r.ok) throw new Error('Slack API call failed: ' + r.message);\nif (!r.body || r.body.ok !== true) {\n  const code = r.body && r.body.error;\n  throw new Error('Slack rejected the report: ' + code + ' → ' + slackHint(code));\n}\nreturn [{ json: { status: '✅ Report posted', channel: r.body.channel, ts: r.body.ts, companiesSummarized: prev.okCount, companiesTotal: prev.total, issues: prev.issues } }];\n\n\nfunction slackHint(code) {\n  const map = {\n    not_in_channel: 'The bot is not a member of this channel. Open the channel in Slack and type: /invite @<your bot name>  (required for private channels).',\n    channel_not_found: 'Channel not found — either CONFIG.slack.channelId is wrong (Slack: channel name → View channel details → copy the ID at the bottom, e.g. C0123ABCD) or it is a private channel the bot has not been invited to (/invite @<your bot name>).',\n    is_archived: 'The channel is archived. Unarchive it or use another channel ID.',\n    invalid_auth: 'The Slack token is invalid. Re-copy the Bot User OAuth Token (xoxb-...) into the Slack credential.',\n    not_authed: 'No Slack token was sent. Select the Slack credential on the Slack HTTP node(s).',\n    token_revoked: 'The Slack token was revoked (app reinstalled or removed). Copy the new xoxb- token into the Slack credential.',\n    account_inactive: 'The Slack token belongs to a deleted user/app. Reinstall the app and update the credential.',\n    missing_scope: 'The bot is missing a scope. In api.slack.com/apps → your app → OAuth & Permissions add chat:write, channels:read, groups:read, then click \"Reinstall to Workspace\" and update the token.',\n    invalid_blocks: 'Slack rejected the message layout (invalid_blocks). This is a workflow bug — report the execution ID.',\n    msg_too_long: 'The message is too long for Slack.',\n    rate_limited: 'Slack rate limit hit — the next run will go through.',\n    ratelimited: 'Slack rate limit hit — the next run will go through.',\n    restricted_action: 'A workspace admin restricts posting in this channel.',\n  };\n  return map[code] || 'See https://api.slack.com/methods/chat.postMessage#errors';\n}\n"
+      },
+      "id": "2b1cda39-7a9c-7032-3c5c-380742af691a",
+      "name": "Verify Slack Delivery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "▶ Seed Contacts (manual)": {
+      "main": [
+        [
+          {
+            "node": "Mode: Seed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Daily 7:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Mode: Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mode: Seed": {
+      "main": [
+        [
+          {
+            "node": "CONFIG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mode: Daily Report": {
+      "main": [
+        [
+          {
+            "node": "CONFIG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CONFIG": {
+      "main": [
+        [
+          {
+            "node": "Seed Path",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Report Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seed Path": {
+      "main": [
+        [
+          {
+            "node": "Airtable: Read Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable: Read Schema": {
+      "main": [
+        [
+          {
+            "node": "Plan Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Schema": {
+      "main": [
+        [
+          {
+            "node": "Schema Changes Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schema Changes Needed?": {
+      "main": [
+        [
+          {
+            "node": "Split Schema Ops",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Random Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Schema Ops": {
+      "main": [
+        [
+          {
+            "node": "Airtable: Apply Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable: Apply Schema": {
+      "main": [
+        [
+          {
+            "node": "Verify Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Schema": {
+      "main": [
+        [
+          {
+            "node": "Generate Random Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Random Contacts": {
+      "main": [
+        [
+          {
+            "node": "Airtable: Create Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable: Create Contacts": {
+      "main": [
+        [
+          {
+            "node": "Seed Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Path": {
+      "main": [
+        [
+          {
+            "node": "Airtable: List Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable: List Contacts": {
+      "main": [
+        [
+          {
+            "node": "Group Contacts by Company",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group Contacts by Company": {
+      "main": [
+        [
+          {
+            "node": "OpenAI: Summarize Company",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI: Summarize Company": {
+      "main": [
+        [
+          {
+            "node": "Validate Summaries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Summaries": {
+      "main": [
+        [
+          {
+            "node": "Prepare Google Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Google Docs": {
+      "main": [
+        [
+          {
+            "node": "Drive: Create Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive: Create Doc": {
+      "main": [
+        [
+          {
+            "node": "Build Doc Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Doc Content": {
+      "main": [
+        [
+          {
+            "node": "Docs: Write Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docs: Write Content": {
+      "main": [
+        [
+          {
+            "node": "Collect Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Docs": {
+      "main": [
+        [
+          {
+            "node": "Sharing Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sharing Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Split Share Requests",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Slack Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Share Requests": {
+      "main": [
+        [
+          {
+            "node": "Drive: Share Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive: Share Doc": {
+      "main": [
+        [
+          {
+            "node": "Collect Sharing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Sharing": {
+      "main": [
+        [
+          {
+            "node": "Build Slack Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Report": {
+      "main": [
+        [
+          {
+            "node": "Slack: Post Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Post Report": {
+      "main": [
+        [
+          {
+            "node": "Verify Slack Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
