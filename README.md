@@ -2,6 +2,8 @@
 
 An n8n workflow that keeps a contact list in Airtable. Every morning at 7:00 AM it writes an AI brief for each company in that list, saves each brief as a Google Doc, and posts a digest to Slack with links to the Docs.
 
+**Case study:** [harshith-nayaka-l-portfolio.vercel.app/work/airtable-ai-company-briefs](https://harshith-nayaka-l-portfolio.vercel.app/work/airtable-ai-company-briefs): the problem, the architecture and the engineering decisions behind this workflow.
+
 **One import. One CONFIG node to fill. No code changes.**
 
 ---
